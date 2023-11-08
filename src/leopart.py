@@ -110,10 +110,8 @@ class Leopart(pl.LightningModule):
         else:
             self.get_assignments = self.sinkhorn
 
-        # init model
-        if self.use_teacher:
-            self.teacher = None
-        self.model = self.init_model()  # inits teacher as well
+        # init model and teacher
+        self.model, self.teacher = self.init_model()
         self.softmax = nn.Softmax(dim=1)
 
         # compute iters per epoch
@@ -140,18 +138,25 @@ class Leopart(pl.LightningModule):
             model_func = vit_large
         else:
             raise ValueError(f"{self.arch} is not supported")
+
+        teacher = None
         if self.use_teacher:
-            self.teacher = model_func(patch_size=self.patch_size,
-                                      output_dim=self.projection_feat_dim,
-                                      hidden_dim=self.projection_hidden_dim,
-                                      nmb_prototypes=self.nmb_prototypes,
-                                      n_layers_projection_head=self.n_layers_projection_head)
-        return model_func(patch_size=self.patch_size,
-                         drop_path_rate=0.1,
-                         output_dim=self.projection_feat_dim,
-                         hidden_dim=self.projection_hidden_dim,
-                         nmb_prototypes=self.nmb_prototypes,
-                         n_layers_projection_head=self.n_layers_projection_head)
+            teacher = model_func(
+                patch_size=self.patch_size,
+                output_dim=self.projection_feat_dim,
+                hidden_dim=self.projection_hidden_dim,
+                nmb_prototypes=self.nmb_prototypes,
+                n_layers_projection_head=self.n_layers_projection_head
+            )
+        student = model_func(
+            patch_size=self.patch_size,
+            drop_path_rate=0.1,
+            output_dim=self.projection_feat_dim,
+            hidden_dim=self.projection_hidden_dim,
+            nmb_prototypes=self.nmb_prototypes,
+            n_layers_projection_head=self.n_layers_projection_head
+        )
+        return student, teacher
 
     def on_train_epoch_start(self):
         # Init queue if queue is None

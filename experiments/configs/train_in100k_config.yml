@@ -1,11 +1,11 @@
 # exp4
 num_workers: 20
-gpus: 2
+gpus: 1
 
 tags: "leopart"
 
 data:
-  data_dir: "<your imagenet root dir>"
+  data_dir: "/gpfs/home2/ramaudruz/self-label/imagenette2"
   dataset_name: "imagenet100k" # coco, imagenet100k or voc
   size_crops: [224, 96]
   jitter_strength: 1.0
@@ -16,7 +16,7 @@ data:
   nmb_samples: [2, 4]
   size_crops_val: 448 # Crops size for validation and seg maps viz
   num_classes_val: 21
-  voc_data_path: "<your voc dir>"
+  voc_data_path: "/gpfs/home2/ramaudruz/self-label"
 
 train:
   use_teacher: True

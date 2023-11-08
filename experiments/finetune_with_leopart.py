@@ -24,7 +24,7 @@ api_key = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJod
 
 
 @click.command()
-@click.option("--config_path", type=str)
+@click.option("--config_path", type=str, default='/gpfs/home2/ramaudruz/leopart/experiments/configs/train_in100k_config.yml')
 @click.option("--seed", type=int, default=400)
 def entry_script(config_path, seed):
     if config_path is not None:
@@ -94,9 +94,13 @@ def finetune_with_spatial_loss(_config, _run):
                                            train_transforms=train_transforms,
                                            val_transforms=None)
     elif dataset_name == 'imagenet100k':
-        num_images = 126689
-        with open(os.path.join(data_dir, "imagenet100.txt")) as f:
-            class_names = [line.rstrip('\n') for line in f]
+        # num_images = 126689
+        # with open(os.path.join(data_dir, "imagenet100.txt")) as f:
+        #     class_names = [line.rstrip('\n') for line in f]
+        metadata_df = pd.read_csv(os.path.join(data_dir, "noisy_imagenette.csv"))
+        class_names = metadata_df['noisy_labels_0'].tolist()
+        num_images = 12692202
+
         train_data_module = ImageNetDataModule(train_transforms=train_transforms,
                                                batch_size=train_config["batch_size"],
                                                class_names=class_names,
