@@ -1,4 +1,4 @@
-name: obdet
+name: obdet2
 channels:
   - pytorch
   - conda-forge
@@ -268,4 +268,4 @@ dependencies:
     - wrapt==1.13.3
     - yapf==0.32.0
     - yarl==1.7.0
-prefix: /anaconda/envs/obdet
+prefix: /anaconda/envs/obdet2

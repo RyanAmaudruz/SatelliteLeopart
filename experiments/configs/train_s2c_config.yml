@@ -1,17 +1,17 @@
 # exp4
-num_workers: 20
+num_workers: 16
 gpus: 1
 
 tags: "leopart"
 
 data:
-  data_dir: "/gpfs/home2/ramaudruz/self-label/imagenette2"
-  dataset_name: "imagenet100k" # coco, imagenet100k or voc
+  data_dir: "/gpfs/scratch1/shared/ramaudruz/s2c_un"
+  dataset_name: "s2c_un" # coco, imagenet100k or voc
   size_crops: [224, 96]
   jitter_strength: 1.0
   blur_strength: 1.0
-  min_scale_crops: [0.25, 0.05]
-  max_scale_crops: [1., 0.25]
+  min_scale_crops: [0.25, 0.05] # [0.4, 0.05]
+  max_scale_crops: [1., 0.25] # [1, 0.4]
   min_intersection_crops: 0.01
   nmb_samples: [2, 4]
   size_crops_val: 448 # Crops size for validation and seg maps viz
@@ -31,7 +31,7 @@ train:
   projection_hidden_dim: 2048
   n_layers_projection_head: 3
   queue_length: 8192
-  loss_mask: 'fg'
+  loss_mask: 'all'
   batch_size: 32 # effective batch size is bs * gpus * res_w ** 2
   max_epochs: 50
   nmb_prototypes: 300
@@ -50,6 +50,6 @@ train:
   val_downsample_masks: True
   val_iters: 10
   save_checkpoint_every_n_epochs: 5
-  checkpoint_dir: "<your ckpt dir>"
+  checkpoint_dir: "/gpfs/work5/0/prjs0790/data/run_outputs/checkpoints/leopart_ssl/leopart_satellite_pretrain"
   checkpoint: null
   only_load_weights: True

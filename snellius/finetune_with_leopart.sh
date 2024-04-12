@@ -1,15 +1,16 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --gpus=1
+#SBATCH --cpus-per-task=18
+#SBATCH --gpus=2
 #SBATCH --partition=gpu
-#SBATCH --time=40:00:00
-#SBATCH --output=pretrain_dino_s2c.out
-#SBATCH --job-name=pretrain_dino_s2c
+#SBATCH --time=60:00:00
+#SBATCH --exclude=gcn45,gcn59
+#SBATCH --output=finetune_with_leopart.out
+#SBATCH --job-name=finetune_with_leopart
 
 # Execute program located in $HOME
 
-source activate obdet
+source activate obdet2
 
-srun python src/benchmark/pretrain_ssl/pretrain_dino_s2c_original.py
+srun python experiments/finetune_with_leopart.py

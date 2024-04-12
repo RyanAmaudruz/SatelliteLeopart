@@ -11,9 +11,13 @@ from pytorch_lightning.loggers import NeptuneLogger
 from torchvision.transforms import ToTensor, Compose, Resize, Normalize
 from torchvision.transforms.functional import InterpolationMode
 
+import sys
+sys.path.append('./')
+
 from data.coco.coco_data_module import CocoDataModule
 from data.imagenet.imagenet_data_module import ImageNetDataModule
 from data.VOCdevkit.vocdata import VOCDataModule, TrainXVOCValDataModule
+from data.s2c.s2c_data_module import S2cDataModule
 from experiments.utils import get_backbone_weights
 from src.leopart import Leopart
 from src.leopart_transforms import LeopartTransforms
@@ -24,7 +28,8 @@ api_key = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJod
 
 
 @click.command()
-@click.option("--config_path", type=str, default='/gpfs/home2/ramaudruz/leopart/experiments/configs/train_in100k_config.yml')
+# @click.option("--config_path", type=str, default='/gpfs/home2/ramaudruz/leopart/experiments/configs/train_s2c_mgpu_config.yml')
+@click.option("--config_path", type=str, default='/gpfs/home2/ramaudruz/leopart/experiments/configs/train_s2c_config.yml')
 @click.option("--seed", type=int, default=400)
 def entry_script(config_path, seed):
     if config_path is not None:
@@ -75,14 +80,14 @@ def finetune_with_spatial_loss(_config, _run):
                                     Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
     val_target_transforms = Compose([Resize((val_size, val_size), interpolation=InterpolationMode.NEAREST),
                                      ToTensor()])
-    voc_data_module = VOCDataModule(batch_size=train_config["batch_size"],
-                                    num_workers=_config["num_workers"],
-                                    train_split="trainaug",
-                                    val_split="val",
-                                    data_dir=data_config["voc_data_path"],
-                                    train_image_transform=train_transforms,
-                                    val_image_transform=val_image_transforms,
-                                    val_target_transform=val_target_transforms)
+    # voc_data_module = VOCDataModule(batch_size=train_config["batch_size"],
+    #                                 num_workers=_config["num_workers"],
+    #                                 train_split="trainaug",
+    #                                 val_split="val",
+    #                                 data_dir=data_config["voc_data_path"],
+    #                                 train_image_transform=train_transforms,
+    #                                 val_image_transform=val_image_transforms,
+    #                                 val_target_transform=val_target_transforms)
 
     # Setup train data
     if dataset_name == "coco":
@@ -118,13 +123,31 @@ def finetune_with_spatial_loss(_config, _run):
                                                num_workers=_config["num_workers"],
                                                data_dir=data_dir,
                                                num_images=num_images)
-    elif dataset_name == 'voc':
-        train_data_module = voc_data_module
+    # elif dataset_name == 'voc':
+    #     train_data_module = voc_data_module
+    elif dataset_name == 's2c_un':
+        # num_images = 126689
+        # with open(os.path.join(data_dir, "imagenet100.txt")) as f:
+        #     class_names = [line.rstrip('\n') for line in f]
+        meta_df = pd.read_csv(os.path.join(data_dir, "ssl4eo_s2_l1c_full_extract_metadata.csv"))
+        temp_var = meta_df['patch_id'].astype(str)
+        meta_df['patch_id'] = temp_var.map(lambda x: (7 - len(x)) * '0' + x)
+        meta_df['file_name'] = meta_df['patch_id'] + '/' + meta_df['timestamp']
+        num_images = meta_df.shape[0]
+
+        train_data_module = S2cDataModule(
+            train_transforms=train_transforms,
+            batch_size=train_config["batch_size"],
+            meta_df=meta_df,
+            num_workers=_config["num_workers"],
+            num_images=num_images
+        )
     else:
         raise ValueError(f"Data set {dataset_name} not supported")
 
     # Use data module wrapper to have train_data_module provide train loader and voc data module the val loader
-    data_module = TrainXVOCValDataModule(train_data_module, voc_data_module)
+    data_module = train_data_module
+    # data_module = TrainXVOCValDataModule(train_data_module, voc_data_module)
 
     # Init method
     model = Leopart(
@@ -177,6 +200,37 @@ def finetune_with_spatial_loss(_config, _run):
                                              train_config["pretrained_weights"],
                                              patch_size=train_config.get("patch_size"),
                                              weight_prefix="teacher")
+
+            # state_dict = torch.load('/gpfs/work5/0/prjs0790/data/run_outputs/checkpoints/ssl4eo_ssl/ssl_s2c_new_transforms/checkpoint0095.pth', map_location="cpu")
+            #
+            # key_list = list(state_dict['teacher'].keys())
+            # for k in key_list:
+            #     if k.replace('backbone', 'teacher') in w_teacher:
+            #         w_teacher[k.replace('backbone', 'teacher')] = state_dict['teacher'][k]
+            #
+            # key_list = list(state_dict['student'].keys())
+            # for k in key_list:
+            #     if k.replace('module.backbone', 'model') in w_student:
+            #         w_student[k.replace('module.backbone', 'model')] = state_dict['student'][k]
+
+            # w_student['model.patch_embed.proj.weight'] = torch.concat(
+            #     [w_student['model.patch_embed.proj.weight']] * 4 +
+            #     [w_student['model.patch_embed.proj.weight'][:, 0:1, :, :]]
+            #     , 1
+            # )
+            # w_teacher['teacher.patch_embed.proj.weight'] = torch.concat(
+            #     [w_teacher['teacher.patch_embed.proj.weight']] * 4 +
+            #     [w_teacher['teacher.patch_embed.proj.weight'][:, 0:1, :, :]]
+            #     , 1
+            # )
+
+            student_sat_w = torch.load('/gpfs/work5/0/prjs0790/data/modified_checkpoints/ssl_dino_new_trans_e95_student_MODIFIED.pth', map_location="cpu")
+            teacher_sat_w = torch.load('/gpfs/work5/0/prjs0790/data/modified_checkpoints/ssl_dino_new_trans_e95_teacher_MODIFIED.pth', map_location="cpu")
+            for k, v in student_sat_w['state_dict'].items():
+                w_student[k] = v
+            for k, v in teacher_sat_w['state_dict'].items():
+                w_teacher[k] = v
+
             msg = model.load_state_dict({**w_student, **w_teacher}, strict=False)
             print(msg)
 
@@ -190,19 +244,23 @@ def finetune_with_spatial_loss(_config, _run):
         period=train_config["save_checkpoint_every_n_epochs"]
     )
     callbacks = [checkpoint_callback]
-    eval_attn = EvaluateAttnMaps(voc_root=data_config["voc_data_path"], train_input_height=data_config["size_crops"][0],
-                                 attn_batch_size=train_config["batch_size"] * 4, num_workers=_config["num_workers"])
-    callbacks.append(eval_attn)
+    # eval_attn = EvaluateAttnMaps(voc_root=data_config["voc_data_path"], train_input_height=data_config["size_crops"][0],
+    #                              attn_batch_size=train_config["batch_size"] * 4, num_workers=_config["num_workers"])
+    # callbacks.append(eval_attn)
 
     # Used if train data is small as for pvoc
     val_every_n_epochs = train_config.get("val_every_n_epochs")
     if val_every_n_epochs is None:
         val_every_n_epochs = 1
 
+    from pytorch_lightning.loggers import WandbLogger
+    # from pytorch_lightning import Trainer
+    wandb_logger = WandbLogger(log_model="all")
     # Setup trainer and start training
+
     trainer = Trainer(
         check_val_every_n_epoch=val_every_n_epochs,
-        logger=neptune_logger,
+        logger=wandb_logger,
         max_epochs=train_config["max_epochs"],
         gpus=_config["gpus"],
         accelerator='ddp' if _config["gpus"] > 1 else None,
@@ -214,7 +272,7 @@ def finetune_with_spatial_loss(_config, _run):
         num_sanity_val_steps=train_config['val_iters'],
         resume_from_checkpoint=train_config['checkpoint'] if not train_config["only_load_weights"] else None,
         terminate_on_nan=True,
-        callbacks=callbacks
+        callbacks=callbacks,
     )
     trainer.fit(model, datamodule=data_module)
 

@@ -1,3 +1,4 @@
+import pandas as pd
 import pytorch_lightning as pl
 import random
 import os
@@ -7,14 +8,23 @@ from torch.utils.data import DataLoader, Dataset
 from typing import List, Optional
 
 from data.imagenet import logger
+import numpy as np
+import h5py
 
-class ImageNetDataModule(pl.LightningDataModule):
+S2C_MEAN = [1605.57504906, 1390.78157673, 1314.8729939, 1363.52445545, 1549.44374991, 2091.74883118, 2371.7172463, 2299.90463006, 2560.29504086, 830.06605044, 22.10351321, 2177.07172323, 1524.06546312]
+
+S2C_STD = [786.78685367, 850.34818441, 875.06484736, 1138.84957046, 1122.17775652, 1161.59187054, 1274.39184232, 1248.42891965, 1345.52684884, 577.31607053, 51.15431158, 1336.09932639, 1136.53823676]
+
+S2C_MEAN_NEW = [x / 10000.0 * 255.0 for x in S2C_MEAN]
+
+S2C_STD_NEW = [x / 10000.0 * 255.0 for x in S2C_STD]
+
+class S2cDataModule(pl.LightningDataModule):
 
     def __init__(self,
                  num_workers: int,
                  batch_size: int,
-                 data_dir: str,
-                 class_names: List[str],
+                 meta_df: pd.DataFrame,
                  train_transforms,
                  num_images: int,
                  val_transforms = None,
@@ -23,37 +33,26 @@ class ImageNetDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.batch_size = batch_size
         self.size_val_set = size_val_set
-        self.num_images = num_images
-        self.file_list = self.make_dataset(class_names, data_dir)
+        self.meta_df = meta_df
+        self.patch_id_list = self.meta_df['patch_id'].unique().tolist()
+        self.num_images = len(self.patch_id_list)
+        # self.num_images = num_images
         self.train_transforms = train_transforms
         self.val_transforms = val_transforms
         self.im_train = None
         self.im_val = None
+        self.file_list = meta_df['file_name'].tolist()
         random.shuffle(self.file_list)
         logger.info(f"Found {len(self.file_list)} many images")
 
-    def make_dataset(self, class_names, data_dir):
-        instances = []
-        last_num = 0
-        for target_class in class_names:
-            target_dir = os.path.join(data_dir, target_class)
-            if not os.path.isdir(target_dir):
-                raise ValueError(f"Target class {target_class} could not be found under path {target_dir}")
-            for root, _, fnames in sorted(os.walk(target_dir, followlinks=True)):
-                for fname in sorted(fnames):
-                    path = os.path.join(root, fname)
-                    instances.append(path)
-            logger.debug(f"Found {len(instances)-last_num} many images for class {target_class}")
-            last_num = len(instances)
-        return instances
-
     def __len__(self):
-        return len(self.file_list)
+        # return len(self.file_list)
+        return len(self.patch_id_list)
 
     def setup(self, stage: Optional[str] = None):
         # Split test set in val an test
         if stage == 'fit' or stage is None:
-            self.im_train = UnlabelledImageNet(self.file_list, self.train_transforms)
+            self.im_train = UnlabelledSc2(self.patch_id_list, self.train_transforms)
             assert len(self.im_train) == self.num_images
             print(f"Train size {len(self.im_train)}")
         else:
@@ -66,7 +65,7 @@ class ImageNetDataModule(pl.LightningDataModule):
                           drop_last=True, pin_memory=True)
 
 
-class UnlabelledImageNet(Dataset):
+class UnlabelledSc2(Dataset):
 
     def __init__(self, file_list, transforms):
         self.file_names = file_list
@@ -76,9 +75,17 @@ class UnlabelledImageNet(Dataset):
         return len(self.file_names)
 
     def __getitem__(self, idx):
-        img_path = self.file_names[idx]
-        image = Image.open(img_path).convert('RGB')
+        patch_id = self.file_names[idx]
+        with h5py.File('/gpfs/scratch1/shared/ramaudruz/s2c_un/s2c_264_light_new.h5', 'r') as f:
+            data = np.array(f.get(patch_id))
+
+        # data = data.astype('float32')
+
+        # for i, (s2c_mean, s2c_std) in enumerate(zip(S2C_MEAN_NEW, S2C_STD_NEW)):
+        #     data[:, i, :, :] = (data[:, i, :, :] - s2c_mean) / s2c_std
+        # img_path = self.file_names[idx]
+        # image = Image.open(img_path).convert('RGB')
         if self.transform:
-            image = self.transform(image)
+            image = self.transform(data)
         return image
 

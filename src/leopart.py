@@ -119,11 +119,13 @@ class Leopart(pl.LightningModule):
         self.train_iters_per_epoch = self.num_samples // global_batch_size
 
         # init wd and momentum schedule
-        self.wd_schedule = cosine_scheduler(self.weight_decay, weight_decay_end,
-                                            self.max_epochs, self.train_iters_per_epoch)
+        self.wd_schedule = cosine_scheduler(
+            self.weight_decay, weight_decay_end, self.max_epochs, self.train_iters_per_epoch
+        )
         if self.use_teacher:
-            self.momentum_schedule = cosine_scheduler(momentum_teacher, momentum_teacher_end,
-                                                      self.max_epochs, self.train_iters_per_epoch)
+            self.momentum_schedule = cosine_scheduler(
+                momentum_teacher, momentum_teacher_end, self.max_epochs, self.train_iters_per_epoch
+            )
 
         # init metric modules
         self.preds_miou_layer4 = PredsmIoUKmeans(num_clusters_kmeans, num_classes)
@@ -146,7 +148,8 @@ class Leopart(pl.LightningModule):
                 output_dim=self.projection_feat_dim,
                 hidden_dim=self.projection_hidden_dim,
                 nmb_prototypes=self.nmb_prototypes,
-                n_layers_projection_head=self.n_layers_projection_head
+                n_layers_projection_head=self.n_layers_projection_head,
+                in_chans=13
             )
         student = model_func(
             patch_size=self.patch_size,
@@ -154,7 +157,8 @@ class Leopart(pl.LightningModule):
             output_dim=self.projection_feat_dim,
             hidden_dim=self.projection_hidden_dim,
             nmb_prototypes=self.nmb_prototypes,
-            n_layers_projection_head=self.n_layers_projection_head
+            n_layers_projection_head=self.n_layers_projection_head,
+            in_chans=13
         )
         return student, teacher
 
@@ -183,18 +187,19 @@ class Leopart(pl.LightningModule):
 
         # Prepare param groups. Exclude norm and bias from weight decay if flag set.
         if self.exclude_norm_bias:
-            backbone_params = self.exclude_from_wt_decay(backbone_params_named,
-                                                         weight_decay=self.weight_decay,
-                                                         lr=self.lr_backbone)
-            head_params = self.exclude_from_wt_decay(head_params_named,
-                                                     weight_decay=self.weight_decay,
-                                                     lr=self.lr_heads)
+            backbone_params = self.exclude_from_wt_decay(
+                backbone_params_named, weight_decay=self.weight_decay, lr=self.lr_backbone
+            )
+            head_params = self.exclude_from_wt_decay(
+                head_params_named, weight_decay=self.weight_decay, lr=self.lr_heads
+            )
             params = backbone_params + head_params
         else:
             backbone_params = [param for _, param in backbone_params_named]
             head_params = [param for _, param in head_params_named]
-            params = [{'params': backbone_params, 'lr': self.lr_backbone},
-                      {'params': head_params, 'lr': self.lr_heads}]
+            params = [
+                {'params': backbone_params, 'lr': self.lr_backbone}, {'params': head_params, 'lr': self.lr_heads}
+            ]
 
         assert len(list(self.model.parameters())) == len(backbone_params_named) + len(head_params_named)
 
@@ -203,8 +208,9 @@ class Leopart(pl.LightningModule):
             optimizer = torch.optim.AdamW(params, weight_decay=self.weight_decay)
         else:
             raise ValueError(f'Optimizer {self.optim} not supported')
-        scheduler = CosineAnnealingLR(optimizer, T_max=self.train_iters_per_epoch * self.max_epochs,
-                                      eta_min=self.final_lr)
+        scheduler = CosineAnnealingLR(
+            optimizer, T_max=self.train_iters_per_epoch * self.max_epochs, eta_min=self.final_lr
+        )
         return [optimizer], [{'scheduler': scheduler, 'interval': 'step'}]
 
     @staticmethod
@@ -220,8 +226,10 @@ class Leopart(pl.LightningModule):
                 excluded_params.append(param)
             else:
                 params.append(param)
-        return [{'params': params, 'weight_decay': weight_decay, 'lr': lr},
-                {'params': excluded_params, 'weight_decay': 0., 'lr': lr}]
+        return [
+            {'params': params, 'weight_decay': weight_decay, 'lr': lr},
+            {'params': excluded_params, 'weight_decay': 0., 'lr': lr}
+        ]
 
     def optimizer_step(self, epoch: int = None, batch_idx: int = None, optimizer: Optimizer = None,
                        optimizer_idx: int = None, optimizer_closure: Optional[Callable] = None,
@@ -250,9 +258,10 @@ class Leopart(pl.LightningModule):
                 self.teacher.prototypes.weight.copy_(w)
 
         # 2. multi-res forward passes
-        last_self_attention = True
         if self.loss_mask == "all":
             last_self_attention = False
+        else:
+            last_self_attention = True
         bs = inputs[0].size(0)
         if self.use_teacher:
             res_forward_teacher = self.teacher(inputs[:2], last_self_attention=last_self_attention)
@@ -271,24 +280,26 @@ class Leopart(pl.LightningModule):
         assert gc_res_w.is_integer() and gc_res_w.is_integer(), "Image dims need to be divisible by patch size"
         assert gc_res_w == gc_res_h, f"Only supporting square images not {inputs[0].size(2)}x{inputs[0].size(3)}"
         gc_spatial_res = int(gc_res_w)
-        gc_student_spatial_output, lc_student_spatial_output = \
-            student_spatial_output[:bs * self.nmb_crops[0] * gc_spatial_res ** 2], \
-            student_spatial_output[bs * self.nmb_crops[0] * gc_spatial_res ** 2:]
+        index_to_cut = bs * self.nmb_crops[0] * gc_spatial_res ** 2
+        gc_student_spatial_output = student_spatial_output[:index_to_cut]
+        lc_student_spatial_output = student_spatial_output[index_to_cut:]
 
         attn_hard = None
         if self.loss_mask != "all":
             # Merge attention heads and threshold attentions
-            attn_smooth = sum(teacher_gc_attn[:, i] * 1 / teacher_gc_attn.size(1) for i
-                              in range(teacher_gc_attn.size(1)))
+            attn_smooth = sum(
+                teacher_gc_attn[:, i] * 1 / teacher_gc_attn.size(1) for i in range(teacher_gc_attn.size(1))
+            )
             attn_smooth = attn_smooth.reshape(bs * self.nmb_crops[0], 1, gc_spatial_res, gc_spatial_res)
             attn_hard = process_attentions(attn_smooth, gc_spatial_res, threshold=0.6, blur_sigma=0.6)
             if self.loss_mask == 'bg':
                 attn_hard = torch.abs(attn_hard - 1) # invert 1-0 mask if we want to train on bg tokens
 
         # Calculate loss
-        spatial_loss = self.spatial_loss(teacher_gc_spatial_output, gc_student_spatial_output,
-                                         lc_student_spatial_output, teacher_gc_spatial_emb, bboxes, bs, gc_spatial_res,
-                                         attn_hard=attn_hard)
+        spatial_loss = self.spatial_loss(
+            teacher_gc_spatial_output, gc_student_spatial_output, lc_student_spatial_output, teacher_gc_spatial_emb,
+            bboxes, bs, gc_spatial_res, attn_hard=attn_hard
+        )
         return spatial_loss
 
     def spatial_loss(self, gc_teacher_output: torch.Tensor, gc_student_output: torch.Tensor,
@@ -304,22 +315,23 @@ class Leopart(pl.LightningModule):
         for i, crop_id in enumerate(self.crops_for_assign):
             with torch.no_grad():
                 # Select spatial cluster preds for global crop with crop_id
-                out = gc_teacher_output[bs * gc_spatial_res ** 2 * crop_id:bs * gc_spatial_res ** 2 * (crop_id + 1)]
+                gc_start_i = bs * gc_spatial_res ** 2 * crop_id
+                gc_end_i = bs * gc_spatial_res ** 2 * (crop_id + 1)
+                out = gc_teacher_output[gc_start_i:gc_end_i]
                 num_spatial_vectors_for_pred = out.size(0)
 
                 if self.queue is not None:
                     if self.use_the_queue or not torch.all(self.queue[i, -1, :] == 0):
                         self.use_the_queue = True
-                        out = torch.cat((torch.mm(self.queue[i], torch.flatten(self.model.prototypes.weight, 1).t()),
-                                         out))
+                        out = torch.cat([self.queue[i] @ self.model.prototypes.weight.flatten(1).T, out])
 
                     # Add spatial embeddings to queue
                     # Use attention to determine number of foreground embeddings to be stored
-                    emb_gc = gc_teacher_emb[bs * gc_spatial_res ** 2 * crop_id:bs * gc_spatial_res ** 2 * (crop_id + 1)]
+                    emb_gc = gc_teacher_emb[gc_start_i:gc_end_i]
                     if attn_hard is not None:
                         # only add fg embeddings to queue
                         flat_mask = attn_hard.permute(0, 2, 3, 1).flatten().bool()
-                        gc_fg_mask = flat_mask[bs * gc_spatial_res**2 * crop_id: bs * gc_spatial_res**2 * (crop_id+1)]
+                        gc_fg_mask = flat_mask[gc_start_i:gc_end_i]
                         emb_gc = emb_gc[gc_fg_mask]
                     num_vectors_to_store = min(bs * 10, self.queue_length // self.gpus)
                     idx = torch.randperm(emb_gc.size(0))[:num_vectors_to_store]
@@ -333,13 +345,15 @@ class Leopart(pl.LightningModule):
             # 6. Roi align cluster assignments
             q_reshaped = q.reshape(bs, gc_spatial_res, gc_spatial_res, -1).permute(0, 3, 1, 2)
             downsampled_current_crop_boxes = torch.unbind(bboxes["gc"][:, crop_id] / self.patch_size)
-            aligned_soft_clusters = roi_align(q_reshaped, downsampled_current_crop_boxes,
-                                              self.roi_align_kernel_size, aligned=True)  # (bs * num_crops, 7, 7, 2048)
+            aligned_soft_clusters = roi_align(
+                q_reshaped, downsampled_current_crop_boxes, self.roi_align_kernel_size, aligned=True
+            )  # (bs * num_crops, 7, 7, 2048)
             if attn_hard is not None:
                 # 6.5 Roi align mask
                 gc_hard_mask = attn_hard[bs * crop_id: bs * (crop_id+1)]  # select attn for crop_id
-                aligned_mask = roi_align(gc_hard_mask, downsampled_current_crop_boxes, self.roi_align_kernel_size,
-                                         aligned=True)
+                aligned_mask = roi_align(
+                    gc_hard_mask, downsampled_current_crop_boxes, self.roi_align_kernel_size, aligned=True
+                )
                 thresholded_mask = (aligned_mask >= 1.0)  # Make mask 1-0
 
             # 7 .cluster assignment prediction
@@ -355,10 +369,12 @@ class Leopart(pl.LightningModule):
                     out = lc_student_output[bs * lc_spatial_res**2 * lc_index:bs * lc_spatial_res**2 * (lc_index + 1)]
                     spatial_res = lc_spatial_res
                 # Roi align cluster predictions
-                aligned_out = roi_align(out.reshape(bs, spatial_res, spatial_res, -1).permute(0, 3, 1, 2),
-                                        torch.unbind(bboxes["all"][:, v, crop_id].unsqueeze(1) / self.patch_size),
-                                        self.roi_align_kernel_size,
-                                        aligned=True)
+                aligned_out = roi_align(
+                    out.reshape(bs, spatial_res, spatial_res, -1).permute(0, 3, 1, 2),
+                    torch.unbind(bboxes["all"][:, v, crop_id].unsqueeze(1) / self.patch_size),
+                    self.roi_align_kernel_size,
+                    aligned=True
+                )
                 aligned_p = self.softmax(aligned_out / self.temperature)
                 aligned_q = aligned_soft_clusters[v::np.sum(self.nmb_crops)]
                 # Mask cross entropy if attn mask was passed
@@ -395,27 +411,11 @@ class Leopart(pl.LightningModule):
 
     def sinkhorn(self, Q: torch.Tensor, nmb_iters: int) -> torch.Tensor:
         with torch.no_grad():
-            sum_Q = torch.sum(Q)
-            Q /= sum_Q
-
-            K, B = Q.shape
-
-            if self.gpus > 0:
-                u = torch.zeros(K).cuda()
-                r = torch.ones(K).cuda() / K
-                c = torch.ones(B).cuda() / B
-            else:
-                u = torch.zeros(K)
-                r = torch.ones(K) / K
-                c = torch.ones(B) / B
-
+            Q /= torch.sum(Q)
             for _ in range(nmb_iters):
-                u = torch.sum(Q, dim=1)
-
-                Q *= (r / u).unsqueeze(1)
-                Q *= (c / torch.sum(Q, dim=0)).unsqueeze(0)
-
-            return (Q / torch.sum(Q, dim=0, keepdim=True)).t().float()
+                Q /= Q.shape[0] * Q.sum(dim=1, keepdim=True)
+                Q /= Q.shape[1] * Q.sum(dim=0, keepdim=True)
+            return (Q / Q.sum(0)).T
 
     def distributed_sinkhorn(self, Q: torch.Tensor, nmb_iters: int) -> torch.Tensor:
         with torch.no_grad():
@@ -441,7 +441,7 @@ class Leopart(pl.LightningModule):
                 Q *= (c / torch.sum(Q, dim=0)).unsqueeze(0)
                 curr_sum = torch.sum(Q, dim=1)
                 dist.all_reduce(curr_sum)
-            return (Q / torch.sum(Q, dim=0, keepdim=True)).t().float()
+            return (Q / Q.sum(0)).T
 
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         # Validate for self.val_iters. Constrained to only parts of the validation set as mIoU calculation

@@ -43,7 +43,7 @@ class CocoDataModule(pl.LightningDataModule):
         return len(self.file_list)
 
     def setup(self, stage: Optional[str] = None):
-        # Split test set in val an test
+        # Split test set in val and test
         if self.mask_type is None:
             self.coco_train = UnlabelledCoco(self.file_list,
                                              self.train_transforms,

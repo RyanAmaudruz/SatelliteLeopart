@@ -1,5 +1,5 @@
 num_workers: 5
-gpus: 1
+gpus: 2
 
 tags: "leopart"
 

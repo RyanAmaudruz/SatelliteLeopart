@@ -232,10 +232,9 @@ class VisionTransformer(nn.Module):
             start_idx = end_idx
 
         emb, out = self.forward_head(output_spatial)
-        result = (emb, out)
         if last_self_attention:
-            result += (attentions,)
-        return result
+            return emb, out, attentions
+        return emb, out
 
     def forward_head(self, x):
         # Projection with l2-norm bottleneck as prototypes layer is l2-normalized
