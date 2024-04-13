@@ -231,6 +231,9 @@ def finetune_with_spatial_loss(_config, _run):
             for k, v in teacher_sat_w['state_dict'].items():
                 w_teacher[k] = v
 
+            w_student = {f'model.{k}' if k.startswith('head.') else k: v for k, v in w_student.items()}
+            w_teacher = {f'teacher.{k}' if k.startswith('head.') else k: v for k, v in w_teacher.items()}
+
             msg = model.load_state_dict({**w_student, **w_teacher}, strict=False)
             print(msg)
 

@@ -6,6 +6,8 @@ import torch.nn as nn
 
 from functools import partial
 
+from src.dino_loss import DINOHead
+
 
 def drop_path(x, drop_prob: float = 0., training: bool = False):
     if drop_prob == 0. or not training:
@@ -167,6 +169,8 @@ class VisionTransformer(nn.Module):
         trunc_normal_(self.cls_token, std=.02)
         self.apply(self._init_weights)
 
+        self.head = DINOHead(embed_dim, out_dim=65536, use_bn=False)
+
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=.02)
@@ -220,13 +224,16 @@ class VisionTransformer(nn.Module):
                 _out, _attn = _out
             spatial_tokens = _out[:, 1:]
             spatial_tokens = spatial_tokens.reshape(-1, self.embed_dim)
+            cls_token = _out[:, 0]
 
             if start_idx == 0:
                 output_spatial = spatial_tokens
+                output_cls = cls_token
                 if last_self_attention:
                     attentions = _attn
             else:
                 output_spatial = torch.cat((output_spatial, spatial_tokens))
+                output_cls = torch.cat((output_cls, cls_token))
                 if last_self_attention:
                     attentions = torch.cat((attentions, _attn))
             start_idx = end_idx
@@ -234,7 +241,7 @@ class VisionTransformer(nn.Module):
         emb, out = self.forward_head(output_spatial)
         if last_self_attention:
             return emb, out, attentions
-        return emb, out
+        return emb, out, output_cls
 
     def forward_head(self, x):
         # Projection with l2-norm bottleneck as prototypes layer is l2-normalized

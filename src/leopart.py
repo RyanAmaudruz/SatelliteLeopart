@@ -99,6 +99,19 @@ class Leopart(pl.LightningModule):
         self.loss_mask = loss_mask
         self.use_teacher = use_teacher
 
+        out_dim = 65536
+        self.register_buffer("center", torch.zeros(1, out_dim))
+        warmup_teacher_temp = 0.04
+        teacher_temp = 0.04
+        warmup_teacher_temp_epochs = 0
+        nepochs = 50
+        self.center_momentum=0.9
+
+        self.teacher_temp_schedule = np.concatenate([
+            np.linspace(warmup_teacher_temp, teacher_temp, warmup_teacher_temp_epochs),
+            np.ones(nepochs - warmup_teacher_temp_epochs) * teacher_temp
+        ])
+
         # queue params
         self.queue_length = queue_length
         self.queue_path = 'queue'
@@ -180,7 +193,7 @@ class Leopart(pl.LightningModule):
         head_params_named = []
         backbone_params_named = []
         for name, param in self.model.named_parameters():
-            if name.startswith("projection_head")  or name.startswith("prototypes"):
+            if name.startswith("projection_head")  or name.startswith("prototypes") or name.startswith("head"):
                 head_params_named.append((name, param))
             else:
                 backbone_params_named.append((name, param))
@@ -269,10 +282,10 @@ class Leopart(pl.LightningModule):
             res_forward_teacher = self.model(inputs[:2], last_self_attention=last_self_attention)
         res_forward_student = self.model(inputs)
         if self.loss_mask == "all":
-            teacher_gc_spatial_emb, teacher_gc_spatial_output = res_forward_teacher
+            teacher_gc_spatial_emb, teacher_gc_spatial_output, teacher_dino_out = res_forward_teacher
         else:
-            teacher_gc_spatial_emb, teacher_gc_spatial_output, teacher_gc_attn = res_forward_teacher
-        _, student_spatial_output = res_forward_student
+            teacher_gc_spatial_emb, teacher_gc_spatial_output, teacher_gc_attn, teacher_dino_out = res_forward_teacher
+        _, student_spatial_output, student_dino_out = res_forward_student
 
         # 3. calculate gc and lc resolutions. Split student output in gc and lc embeddings
         gc_res_w = inputs[0].size(2) / self.patch_size
@@ -295,12 +308,22 @@ class Leopart(pl.LightningModule):
             if self.loss_mask == 'bg':
                 attn_hard = torch.abs(attn_hard - 1) # invert 1-0 mask if we want to train on bg tokens
 
-        # Calculate loss
+        # Calculate spatial loss
         spatial_loss = self.spatial_loss(
             teacher_gc_spatial_output, gc_student_spatial_output, lc_student_spatial_output, teacher_gc_spatial_emb,
             bboxes, bs, gc_spatial_res, attn_hard=attn_hard
         )
-        return spatial_loss
+
+        student_dino_pred = self.model.head(student_dino_out)
+        teacher_dino_pred = self.teacher.head(teacher_dino_out)
+
+
+        # Calculate dino loss
+        dino_loss = self.dino_loss(student_dino_pred, teacher_dino_pred, self.current_epoch)
+
+        total_loss = spatial_loss + (dino_loss / 2)
+
+        return total_loss
 
     def spatial_loss(self, gc_teacher_output: torch.Tensor, gc_student_output: torch.Tensor,
                      lc_student_output: torch.Tensor, gc_teacher_emb: torch.Tensor, bboxes: Dict, bs: int,
@@ -389,6 +412,48 @@ class Leopart(pl.LightningModule):
         loss /= len(self.crops_for_assign)
 
         return loss
+
+    def dino_loss(self, student_output, teacher_output, epoch):
+        """
+        Cross-entropy between softmax outputs of the teacher and student networks.
+        """
+        student_out = student_output / 0.1 # Student temp
+        student_out = student_out.chunk(sum(self.nmb_crops))
+
+        # teacher centering and sharpening
+
+
+
+        temp = self.teacher_temp_schedule[epoch]
+        teacher_out = F.softmax((teacher_output - self.center) / temp, dim=-1)
+        teacher_out = teacher_out.detach().chunk(2)
+
+        total_loss = 0
+        n_loss_terms = 0
+        for iq, q in enumerate(teacher_out):
+            for v in range(len(student_out)):
+                if v == iq:
+                    # we skip cases where student and teacher operate on the same view
+                    continue
+                loss = torch.sum(-q * F.log_softmax(student_out[v], dim=-1), dim=-1)
+                total_loss += loss.mean()
+                n_loss_terms += 1
+        total_loss /= n_loss_terms
+        self.update_center(teacher_output)
+        return total_loss
+
+    @torch.no_grad()
+    def update_center(self, teacher_output):
+        """
+        Update center used for teacher output.
+        """
+        batch_center = torch.sum(teacher_output, dim=0, keepdim=True)
+        # dist.all_reduce(batch_center)
+        # batch_center = batch_center / (len(teacher_output) * dist.get_world_size())
+        batch_center = batch_center / len(teacher_output)
+
+        # ema update
+        self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 
     def training_step(self, batch: Tuple[List[torch.Tensor], Dict], batch_idx: int) -> float:
         if isinstance(batch[1], dict):
