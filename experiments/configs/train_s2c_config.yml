@@ -1,6 +1,6 @@
 # exp4
 num_workers: 16
-gpus: 2
+gpus: 1
 
 tags: "leopart"
 
@@ -30,12 +30,14 @@ train:
   projection_feat_dim: 256 # dim after projection head
   projection_hidden_dim: 2048
   n_layers_projection_head: 3
-  queue_length: 8192
+#  queue_length: 8192
+  queue_length: 16384
   loss_mask: 'all'
-  batch_size: 64 # effective batch size is bs * gpus * res_w ** 2
+#  batch_size: 64 # effective batch size is bs * gpus * res_w ** 2
+  batch_size: 76
 #  batch_size: 2
   max_epochs: 50
-  nmb_prototypes: 300
+  nmb_prototypes: 600
   temperature: 0.1
   sinkhorn_iterations: 3
   crops_for_assign: [0, 1] # num items should be num of global crops

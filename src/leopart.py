@@ -12,6 +12,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 from torchvision.ops import roi_align
 from typing import Callable, Optional, List, Any, Iterator, Tuple, Dict
+from sklearn.cluster import KMeans
 
 from experiments.utils import PredsmIoUKmeans, process_attentions, cosine_scheduler
 from src.vit import vit_small, vit_base, vit_large
@@ -179,7 +180,7 @@ class Leopart(pl.LightningModule):
         # Init queue if queue is None
         if self.queue_length > 0 and self.queue is None:
             self.queue = torch.zeros(
-                len(self.crops_for_assign),
+                # len(self.crops_for_assign),
                 self.queue_length // self.gpus,  # change to nodes * gpus once multi-node
                 self.projection_feat_dim,
                 )
@@ -344,9 +345,11 @@ class Leopart(pl.LightningModule):
                 num_spatial_vectors_for_pred = out.size(0)
 
                 if self.queue is not None:
-                    if self.use_the_queue or not torch.all(self.queue[i, -1, :] == 0):
+                    # if self.use_the_queue or not torch.all(self.queue[i, -1, :] == 0):
+                    if self.use_the_queue or not torch.all(self.queue[-1, :] == 0):
                         self.use_the_queue = True
-                        out = torch.cat([self.queue[i] @ self.model.prototypes.weight.flatten(1).T, out])
+                        # out = torch.cat([self.queue[i] @ self.model.prototypes.weight.flatten(1).T, out])
+                        out = torch.cat([self.queue @ self.model.prototypes.weight.flatten(1).T, out])
 
                     # Add spatial embeddings to queue
                     # Use attention to determine number of foreground embeddings to be stored
@@ -357,13 +360,40 @@ class Leopart(pl.LightningModule):
                         gc_fg_mask = flat_mask[gc_start_i:gc_end_i]
                         emb_gc = emb_gc[gc_fg_mask]
                     num_vectors_to_store = min(bs * 10, self.queue_length // self.gpus)
-                    idx = torch.randperm(emb_gc.size(0))[:num_vectors_to_store]
-                    self.queue[i, num_vectors_to_store:] = self.queue[i, :-num_vectors_to_store].clone()
-                    self.queue[i, :num_vectors_to_store] = emb_gc[idx]
+                    # idx = torch.randperm(emb_gc.size(0))[:num_vectors_to_store]
+                    # self.queue[i, num_vectors_to_store:] = self.queue[i, :-num_vectors_to_store].clone()
+                    # self.queue[i, :num_vectors_to_store] = emb_gc[idx]
 
-                # 5. get assignments
+                    # n_clusters=bs * 10
+
+                    n_clusters = 50
+
+                    num_vectors_to_store = n_clusters
+
+                    kmeans = KMeans(
+                        init="random",
+                        n_clusters=n_clusters,
+                        n_init=1,
+                        max_iter=1000,
+                        random_state=42
+                    )
+                    cluster_pred = kmeans.fit_predict(emb_gc.to('cpu'))
+                    torch_pred = torch.from_numpy(cluster_pred).to('cuda').type(torch.LongTensor)
+                    cluster_mean = self.groupby_mean(emb_gc, torch_pred)[0]
+
+                    # self.queue[i, num_vectors_to_store:] = self.queue[i, :-num_vectors_to_store].clone()
+                    # self.queue[i, :num_vectors_to_store] = cluster_mean
+
+                    self.queue[num_vectors_to_store:] = self.queue[:-num_vectors_to_store].clone()
+                    self.queue[:num_vectors_to_store] = cluster_mean
+
+
+            # 5. get assignments
                 q = torch.exp(out / self.epsilon).t()
                 q = self.get_assignments(q, self.sinkhorn_iterations)[-num_spatial_vectors_for_pred:]
+
+            # out2 = out - out.mean(0)
+            # new_reg_loss = torch.mean(F.relu(1 - (out2.var(0) + 10**-6)**0.5)) * 10
 
             # 6. Roi align cluster assignments
             q_reshaped = q.reshape(bs, gc_spatial_res, gc_spatial_res, -1).permute(0, 3, 1, 2)
@@ -421,9 +451,6 @@ class Leopart(pl.LightningModule):
         student_out = student_out.chunk(sum(self.nmb_crops))
 
         # teacher centering and sharpening
-
-
-
         temp = self.teacher_temp_schedule[epoch]
         teacher_out = F.softmax((teacher_output - self.center) / temp, dim=-1)
         teacher_out = teacher_out.detach().chunk(2)
@@ -557,3 +584,50 @@ class Leopart(pl.LightningModule):
                 if k > self.num_classes:
                     # Log percentage of clusters assigned to background class
                     self.logger.experiment.log_metric(f'K={name}-percentage-bg-cluster', round(matched_bg, 8))
+
+    @staticmethod
+    def groupby_mean(value:torch.Tensor, labels:torch.LongTensor) -> (torch.Tensor, torch.LongTensor):
+        """Group-wise average for (sparse) grouped tensors
+
+        Args:
+            value (torch.Tensor): values to average (# samples, latent dimension)
+            labels (torch.LongTensor): labels for embedding parameters (# samples,)
+
+        Returns:
+            result (torch.Tensor): (# unique labels, latent dimension)
+            new_labels (torch.LongTensor): (# unique labels,)
+
+        Examples:
+            >>> samples = torch.Tensor([
+                                 [0.15, 0.15, 0.15],    #-> group / class 1
+                                 [0.2, 0.2, 0.2],    #-> group / class 3
+                                 [0.4, 0.4, 0.4],    #-> group / class 3
+                                 [0.0, 0.0, 0.0]     #-> group / class 0
+                          ])
+            >>> labels = torch.LongTensor([1, 5, 5, 0])
+            >>> result, new_labels = groupby_mean(samples, labels)
+
+            >>> result
+            tensor([[0.0000, 0.0000, 0.0000],
+                [0.1500, 0.1500, 0.1500],
+                [0.3000, 0.3000, 0.3000]])
+
+            >>> new_labels
+            tensor([0, 1, 5])
+        """
+        uniques = labels.unique().tolist()
+        labels = labels.tolist()
+
+        key_val = {key: val for key, val in zip(uniques, range(len(uniques)))}
+        val_key = {val: key for key, val in zip(uniques, range(len(uniques)))}
+
+        labels = torch.LongTensor(list(map(key_val.get, labels)))
+
+        labels = labels.view(labels.size(0), 1).expand(-1, value.size(1)).to('cuda')
+
+        unique_labels, labels_count = labels.unique(dim=0, return_counts=True)
+        result = torch.zeros_like(unique_labels, dtype=torch.float).scatter_add_(0, labels, value)
+        result = result / labels_count.float().unsqueeze(1)
+        new_labels = torch.LongTensor(list(map(val_key.get, unique_labels[:, 0].tolist())))
+        return result, new_labels
+
