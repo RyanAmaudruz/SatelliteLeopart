@@ -30,8 +30,8 @@ train:
   projection_feat_dim: 256 # dim after projection head
   projection_hidden_dim: 2048
   n_layers_projection_head: 3
-#  queue_length: 8192
-  queue_length: 16384
+  queue_length: 8192
+#  queue_length: 16384
   loss_mask: 'all'
 #  batch_size: 64 # effective batch size is bs * gpus * res_w ** 2
   batch_size: 76
@@ -53,6 +53,6 @@ train:
   val_downsample_masks: True
   val_iters: 10
   save_checkpoint_every_n_epochs: 5
-  checkpoint_dir: "/gpfs/work5/0/prjs0790/data/run_outputs/checkpoints/leopart_ssl/leopart_satellite_pretrain"
+  checkpoint_dir: "/gpfs/work5/0/prjs0790/data/run_outputs/checkpoints/leopart_ssl/new_testing"
   checkpoint: null
   only_load_weights: True

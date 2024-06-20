@@ -180,7 +180,7 @@ class Leopart(pl.LightningModule):
         # Init queue if queue is None
         if self.queue_length > 0 and self.queue is None:
             self.queue = torch.zeros(
-                # len(self.crops_for_assign),
+                len(self.crops_for_assign),
                 self.queue_length // self.gpus,  # change to nodes * gpus once multi-node
                 self.projection_feat_dim,
                 )
@@ -345,11 +345,11 @@ class Leopart(pl.LightningModule):
                 num_spatial_vectors_for_pred = out.size(0)
 
                 if self.queue is not None:
-                    # if self.use_the_queue or not torch.all(self.queue[i, -1, :] == 0):
-                    if self.use_the_queue or not torch.all(self.queue[-1, :] == 0):
+                    if self.use_the_queue or not torch.all(self.queue[i, -1, :] == 0):
+                    # if self.use_the_queue or not torch.all(self.queue[-1, :] == 0):
                         self.use_the_queue = True
-                        # out = torch.cat([self.queue[i] @ self.model.prototypes.weight.flatten(1).T, out])
-                        out = torch.cat([self.queue @ self.model.prototypes.weight.flatten(1).T, out])
+                        out = torch.cat([self.queue[i] @ self.model.prototypes.weight.flatten(1).T, out])
+                        # out = torch.cat([self.queue @ self.model.prototypes.weight.flatten(1).T, out])
 
                     # Add spatial embeddings to queue
                     # Use attention to determine number of foreground embeddings to be stored
@@ -359,7 +359,7 @@ class Leopart(pl.LightningModule):
                         flat_mask = attn_hard.permute(0, 2, 3, 1).flatten().bool()
                         gc_fg_mask = flat_mask[gc_start_i:gc_end_i]
                         emb_gc = emb_gc[gc_fg_mask]
-                    num_vectors_to_store = min(bs * 10, self.queue_length // self.gpus)
+                    # num_vectors_to_store = min(bs * 10, self.queue_length // self.gpus)
                     # idx = torch.randperm(emb_gc.size(0))[:num_vectors_to_store]
                     # self.queue[i, num_vectors_to_store:] = self.queue[i, :-num_vectors_to_store].clone()
                     # self.queue[i, :num_vectors_to_store] = emb_gc[idx]
@@ -381,11 +381,11 @@ class Leopart(pl.LightningModule):
                     torch_pred = torch.from_numpy(cluster_pred).to('cuda').type(torch.LongTensor)
                     cluster_mean = self.groupby_mean(emb_gc, torch_pred)[0]
 
-                    # self.queue[i, num_vectors_to_store:] = self.queue[i, :-num_vectors_to_store].clone()
-                    # self.queue[i, :num_vectors_to_store] = cluster_mean
+                    self.queue[i, num_vectors_to_store:] = self.queue[i, :-num_vectors_to_store].clone()
+                    self.queue[i, :num_vectors_to_store] = cluster_mean
 
-                    self.queue[num_vectors_to_store:] = self.queue[:-num_vectors_to_store].clone()
-                    self.queue[:num_vectors_to_store] = cluster_mean
+                    # self.queue[num_vectors_to_store:] = self.queue[:-num_vectors_to_store].clone()
+                    # self.queue[:num_vectors_to_store] = cluster_mean
 
 
             # 5. get assignments
