@@ -315,14 +315,16 @@ class Leopart(pl.LightningModule):
             bboxes, bs, gc_spatial_res, attn_hard=attn_hard
         )
 
-        student_dino_pred = self.model.head(student_dino_out)
-        teacher_dino_pred = self.teacher.head(teacher_dino_out)
+        # student_dino_pred = self.model.head(student_dino_out)
+        # teacher_dino_pred = self.teacher.head(teacher_dino_out)
 
 
         # Calculate dino loss
-        dino_loss = self.dino_loss(student_dino_pred, teacher_dino_pred, self.current_epoch)
+        # dino_loss = self.dino_loss(student_dino_pred, teacher_dino_pred, self.current_epoch)
 
-        total_loss = spatial_loss + (dino_loss / 2)
+        # total_loss = spatial_loss + (dino_loss / 2)
+
+        total_loss = spatial_loss
 
         return total_loss
 
@@ -359,30 +361,33 @@ class Leopart(pl.LightningModule):
                         flat_mask = attn_hard.permute(0, 2, 3, 1).flatten().bool()
                         gc_fg_mask = flat_mask[gc_start_i:gc_end_i]
                         emb_gc = emb_gc[gc_fg_mask]
-                    # num_vectors_to_store = min(bs * 10, self.queue_length // self.gpus)
-                    # idx = torch.randperm(emb_gc.size(0))[:num_vectors_to_store]
-                    # self.queue[i, num_vectors_to_store:] = self.queue[i, :-num_vectors_to_store].clone()
-                    # self.queue[i, :num_vectors_to_store] = emb_gc[idx]
 
-                    # n_clusters=bs * 10
+                    method_type = 'old'
 
-                    n_clusters = 50
+                    if method_type == 'old':
+                        num_vectors_to_store = min(bs * 10, self.queue_length // self.gpus)
+                        idx = torch.randperm(emb_gc.size(0))[:num_vectors_to_store]
+                        self.queue[i, num_vectors_to_store:] = self.queue[i, :-num_vectors_to_store].clone()
+                        self.queue[i, :num_vectors_to_store] = emb_gc[idx]
+                    else:
 
-                    num_vectors_to_store = n_clusters
+                        n_clusters = 50
 
-                    kmeans = KMeans(
-                        init="random",
-                        n_clusters=n_clusters,
-                        n_init=1,
-                        max_iter=1000,
-                        random_state=42
-                    )
-                    cluster_pred = kmeans.fit_predict(emb_gc.to('cpu'))
-                    torch_pred = torch.from_numpy(cluster_pred).to('cuda').type(torch.LongTensor)
-                    cluster_mean = self.groupby_mean(emb_gc, torch_pred)[0]
+                        num_vectors_to_store = n_clusters
 
-                    self.queue[i, num_vectors_to_store:] = self.queue[i, :-num_vectors_to_store].clone()
-                    self.queue[i, :num_vectors_to_store] = cluster_mean
+                        kmeans = KMeans(
+                            init="random",
+                            n_clusters=n_clusters,
+                            n_init=1,
+                            max_iter=1000,
+                            random_state=42
+                        )
+                        cluster_pred = kmeans.fit_predict(emb_gc.to('cpu'))
+                        torch_pred = torch.from_numpy(cluster_pred).to('cuda').type(torch.LongTensor)
+                        cluster_mean = self.groupby_mean(emb_gc, torch_pred)[0]
+
+                        self.queue[i, num_vectors_to_store:] = self.queue[i, :-num_vectors_to_store].clone()
+                        self.queue[i, :num_vectors_to_store] = cluster_mean
 
                     # self.queue[num_vectors_to_store:] = self.queue[:-num_vectors_to_store].clone()
                     # self.queue[:num_vectors_to_store] = cluster_mean

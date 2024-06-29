@@ -53,6 +53,6 @@ train:
   val_downsample_masks: True
   val_iters: 10
   save_checkpoint_every_n_epochs: 5
-  checkpoint_dir: "/gpfs/work5/0/prjs0790/data/run_outputs/checkpoints/leopart_ssl/new_testing"
+  checkpoint_dir: "/gpfs/work5/0/prjs0790/data/run_outputs/checkpoints/leopart_ssl/last_month"
   checkpoint: null
   only_load_weights: True
