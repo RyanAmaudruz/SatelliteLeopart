@@ -2,7 +2,7 @@
 num_workers: 16
 gpus: 2
 
-tags: "leopart"
+tags: "SatelliteLeopart"
 
 data:
   data_dir: "/gpfs/scratch1/shared/ramaudruz/s2c_un"

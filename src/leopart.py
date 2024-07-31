@@ -29,7 +29,7 @@ class Leopart(pl.LightningModule):
                  queue_length: int = 0, momentum_teacher: float = 0.9995, momentum_teacher_end: float = 1.,
                  exclude_norm_bias: bool = True, optimizer: str = 'adam', num_nodes: int = 1,
                  patch_size: int = 16, roi_align_kernel_size: int = 7, val_downsample_masks: bool = True,
-                 arch: str = 'vit-small'):
+                 arch: str = 'vit-small', include_dino_loss=False):
         """
         Initializes the Leopart for training. We use pytorch lightning as framework.
         :param gpus: number of gpus used per node
@@ -99,13 +99,12 @@ class Leopart(pl.LightningModule):
         self.num_classes = num_classes
         self.loss_mask = loss_mask
         self.use_teacher = use_teacher
-
-        out_dim = 65536
-        self.register_buffer("center", torch.zeros(1, out_dim))
+        self.include_dino_loss = include_dino_loss
+        self.register_buffer("center", torch.zeros(1, 65536))
         warmup_teacher_temp = 0.04
         teacher_temp = 0.04
         warmup_teacher_temp_epochs = 0
-        nepochs = 50
+        nepochs = 25
         self.center_momentum=0.9
 
         self.teacher_temp_schedule = np.concatenate([
@@ -315,16 +314,14 @@ class Leopart(pl.LightningModule):
             bboxes, bs, gc_spatial_res, attn_hard=attn_hard
         )
 
-        # student_dino_pred = self.model.head(student_dino_out)
-        # teacher_dino_pred = self.teacher.head(teacher_dino_out)
-
-
         # Calculate dino loss
-        # dino_loss = self.dino_loss(student_dino_pred, teacher_dino_pred, self.current_epoch)
-
-        # total_loss = spatial_loss + (dino_loss / 2)
-
-        total_loss = spatial_loss
+        if self.include_dino_loss:
+            student_dino_pred = self.model.head(student_dino_out)
+            teacher_dino_pred = self.teacher.head(teacher_dino_out)
+            dino_loss = self.dino_loss(student_dino_pred, teacher_dino_pred, self.current_epoch)
+            total_loss = spatial_loss + (dino_loss / 2)
+        else:
+            total_loss = spatial_loss
 
         return total_loss
 
@@ -480,8 +477,6 @@ class Leopart(pl.LightningModule):
         Update center used for teacher output.
         """
         batch_center = torch.sum(teacher_output, dim=0, keepdim=True)
-        # dist.all_reduce(batch_center)
-        # batch_center = batch_center / (len(teacher_output) * dist.get_world_size())
         batch_center = batch_center / len(teacher_output)
 
         # ema update
@@ -592,33 +587,8 @@ class Leopart(pl.LightningModule):
 
     @staticmethod
     def groupby_mean(value:torch.Tensor, labels:torch.LongTensor) -> (torch.Tensor, torch.LongTensor):
-        """Group-wise average for (sparse) grouped tensors
-
-        Args:
-            value (torch.Tensor): values to average (# samples, latent dimension)
-            labels (torch.LongTensor): labels for embedding parameters (# samples,)
-
-        Returns:
-            result (torch.Tensor): (# unique labels, latent dimension)
-            new_labels (torch.LongTensor): (# unique labels,)
-
-        Examples:
-            >>> samples = torch.Tensor([
-                                 [0.15, 0.15, 0.15],    #-> group / class 1
-                                 [0.2, 0.2, 0.2],    #-> group / class 3
-                                 [0.4, 0.4, 0.4],    #-> group / class 3
-                                 [0.0, 0.0, 0.0]     #-> group / class 0
-                          ])
-            >>> labels = torch.LongTensor([1, 5, 5, 0])
-            >>> result, new_labels = groupby_mean(samples, labels)
-
-            >>> result
-            tensor([[0.0000, 0.0000, 0.0000],
-                [0.1500, 0.1500, 0.1500],
-                [0.3000, 0.3000, 0.3000]])
-
-            >>> new_labels
-            tensor([0, 1, 5])
+        """
+        Method used to perform a groupby mean on torch tensors.
         """
         uniques = labels.unique().tolist()
         labels = labels.tolist()

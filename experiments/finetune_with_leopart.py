@@ -8,28 +8,21 @@ from datetime import datetime
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import NeptuneLogger
-from torchvision.transforms import ToTensor, Compose, Resize, Normalize
-from torchvision.transforms.functional import InterpolationMode
 
 import sys
 sys.path.append('./')
 
-from data.coco.coco_data_module import CocoDataModule
-from data.imagenet.imagenet_data_module import ImageNetDataModule
-from data.VOCdevkit.vocdata import VOCDataModule, TrainXVOCValDataModule
 from data.s2c.s2c_data_module import S2cDataModule
 from experiments.utils import get_backbone_weights
 from src.leopart import Leopart
 from src.leopart_transforms import LeopartTransforms
-from src.evaluate_attn_maps import EvaluateAttnMaps
 
 ex = sacred.experiment.Experiment()
 api_key = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiMTI3NWYzYmEtYWE4NC00NzRhLWJlZGEtNTA5ZTE4NTgxMzg0In0="
 
 
 @click.command()
-# @click.option("--config_path", type=str, default='/gpfs/home2/ramaudruz/leopart/experiments/configs/train_s2c_mgpu_config.yml')
-@click.option("--config_path", type=str, default='/gpfs/home2/ramaudruz/leopart/experiments/configs/train_s2c_config.yml')
+@click.option("--config_path", type=str, default='/gpfs/home2/ramaudruz/SatelliteLeopart/experiments/configs/train_s2c_config.yml')
 @click.option("--seed", type=int, default=400)
 def entry_script(config_path, seed):
     if config_path is not None:
@@ -37,7 +30,7 @@ def entry_script(config_path, seed):
     else:
         ex.add_config(os.path.join(os.path.abspath(os.path.dirname(__file__)), "leopart_config_dev.yml"))
     time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    ex_name = f"leopart-{time}"
+    ex_name = f"SatelliteLeopart-{time}"
     checkpoint_dir = os.path.join(ex.configurations[0]._conf["train"]["checkpoint_dir"], ex_name)
     ex.observers.append(sacred.observers.FileStorageObserver(checkpoint_dir))
     ex.run(config_updates={'seed': seed}, options={'--name': ex_name})
@@ -49,7 +42,7 @@ def finetune_with_spatial_loss(_config, _run):
     # Setup logging
     neptune_logger = NeptuneLogger(
         api_key=api_key,
-        project_name="mkuuwauujinga/spatial-loss",
+        project_name="RyanAmaudruz/SatelliteLeopart",
         experiment_name=_run.experiment_info["name"],
         params=pd.json_normalize(_config).to_dict(orient='records')[0],
         tags=_config["tags"].split(','),
@@ -73,62 +66,7 @@ def finetune_with_spatial_loss(_config, _run):
                                          jitter_strength=data_config["jitter_strength"],
                                          blur_strength=data_config["blur_strength"])
 
-    # Setup voc dataset used for evaluation
-    val_size = data_config["size_crops_val"]
-    val_image_transforms = Compose([Resize((val_size, val_size)),
-                                    ToTensor(),
-                                    Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
-    val_target_transforms = Compose([Resize((val_size, val_size), interpolation=InterpolationMode.NEAREST),
-                                     ToTensor()])
-    # voc_data_module = VOCDataModule(batch_size=train_config["batch_size"],
-    #                                 num_workers=_config["num_workers"],
-    #                                 train_split="trainaug",
-    #                                 val_split="val",
-    #                                 data_dir=data_config["voc_data_path"],
-    #                                 train_image_transform=train_transforms,
-    #                                 val_image_transform=val_image_transforms,
-    #                                 val_target_transform=val_target_transforms)
-
-    # Setup train data
-    if dataset_name == "coco":
-        file_list = os.listdir(os.path.join(data_dir, "train2017"))
-        train_data_module = CocoDataModule(batch_size=train_config["batch_size"],
-                                           num_workers=_config["num_workers"],
-                                           file_list=file_list,
-                                           data_dir=data_dir,
-                                           train_transforms=train_transforms,
-                                           val_transforms=None)
-    elif dataset_name == 'imagenet100k':
-        # num_images = 126689
-        # with open(os.path.join(data_dir, "imagenet100.txt")) as f:
-        #     class_names = [line.rstrip('\n') for line in f]
-        metadata_df = pd.read_csv(os.path.join(data_dir, "noisy_imagenette.csv"))
-        class_names = metadata_df['noisy_labels_0'].tolist()
-        num_images = 12692202
-
-        train_data_module = ImageNetDataModule(train_transforms=train_transforms,
-                                               batch_size=train_config["batch_size"],
-                                               class_names=class_names,
-                                               num_workers=_config["num_workers"],
-                                               data_dir=os.path.join(data_dir, "train"),
-                                               num_images=num_images)
-    elif dataset_name == 'imagenet':
-        num_images = 1281167
-        data_dir = os.path.join(data_dir, "train")
-        class_names = os.listdir(data_dir)
-        assert len(class_names) == 1000
-        train_data_module = ImageNetDataModule(train_transforms=train_transforms,
-                                               batch_size=train_config["batch_size"],
-                                               class_names=class_names,
-                                               num_workers=_config["num_workers"],
-                                               data_dir=data_dir,
-                                               num_images=num_images)
-    # elif dataset_name == 'voc':
-    #     train_data_module = voc_data_module
-    elif dataset_name == 's2c_un':
-        # num_images = 126689
-        # with open(os.path.join(data_dir, "imagenet100.txt")) as f:
-        #     class_names = [line.rstrip('\n') for line in f]
+    if dataset_name == 's2c_un':
         meta_df = pd.read_csv(os.path.join(data_dir, "ssl4eo_s2_l1c_full_extract_metadata.csv"))
         temp_var = meta_df['patch_id'].astype(str)
         meta_df['patch_id'] = temp_var.map(lambda x: (7 - len(x)) * '0' + x)
@@ -201,29 +139,6 @@ def finetune_with_spatial_loss(_config, _run):
                                              patch_size=train_config.get("patch_size"),
                                              weight_prefix="teacher")
 
-            # state_dict = torch.load('/gpfs/work5/0/prjs0790/data/run_outputs/checkpoints/ssl4eo_ssl/ssl_s2c_new_transforms/checkpoint0095.pth', map_location="cpu")
-            #
-            # key_list = list(state_dict['teacher'].keys())
-            # for k in key_list:
-            #     if k.replace('backbone', 'teacher') in w_teacher:
-            #         w_teacher[k.replace('backbone', 'teacher')] = state_dict['teacher'][k]
-            #
-            # key_list = list(state_dict['student'].keys())
-            # for k in key_list:
-            #     if k.replace('module.backbone', 'model') in w_student:
-            #         w_student[k.replace('module.backbone', 'model')] = state_dict['student'][k]
-
-            # w_student['model.patch_embed.proj.weight'] = torch.concat(
-            #     [w_student['model.patch_embed.proj.weight']] * 4 +
-            #     [w_student['model.patch_embed.proj.weight'][:, 0:1, :, :]]
-            #     , 1
-            # )
-            # w_teacher['teacher.patch_embed.proj.weight'] = torch.concat(
-            #     [w_teacher['teacher.patch_embed.proj.weight']] * 4 +
-            #     [w_teacher['teacher.patch_embed.proj.weight'][:, 0:1, :, :]]
-            #     , 1
-            # )
-
             student_sat_w = torch.load('/gpfs/work5/0/prjs0790/data/modified_checkpoints/ssl_dino_new_trans_e95_student_MODIFIED.pth', map_location="cpu")
             teacher_sat_w = torch.load('/gpfs/work5/0/prjs0790/data/modified_checkpoints/ssl_dino_new_trans_e95_teacher_MODIFIED.pth', map_location="cpu")
             for k, v in student_sat_w['state_dict'].items():
@@ -247,9 +162,6 @@ def finetune_with_spatial_loss(_config, _run):
         period=train_config["save_checkpoint_every_n_epochs"]
     )
     callbacks = [checkpoint_callback]
-    # eval_attn = EvaluateAttnMaps(voc_root=data_config["voc_data_path"], train_input_height=data_config["size_crops"][0],
-    #                              attn_batch_size=train_config["batch_size"] * 4, num_workers=_config["num_workers"])
-    # callbacks.append(eval_attn)
 
     # Used if train data is small as for pvoc
     val_every_n_epochs = train_config.get("val_every_n_epochs")

@@ -18,8 +18,6 @@ from torchvision.transforms import GaussianBlur
 from torchvision import models
 from typing import Optional, List, Tuple, Dict
 
-from data.VOCdevkit.vocdata import VOCDataModule
-
 
 class PredsmIoU(Metric):
     """
@@ -327,42 +325,6 @@ def compute_features(loader: DataLoader, model: nn.Module, device: str, spatial_
         all_masks.append(gt.cpu())
     model.cpu()
     return feats, all_masks, attns
-
-
-def store_and_compute_features(datamodule: VOCDataModule, pca_dim: int, model: nn.Module, device: str,
-                               spatial_res: int, experiment_folder: str, gt_save_folder: str = None,
-                               save_attn : bool = True):
-    train_feats, train_gt, train_attns = compute_features(datamodule.train_dataloader(),
-                                                          model, device, spatial_res)
-    print("computed train features")
-    val_feats, val_gt, val_attns = compute_features(datamodule.val_dataloader(),
-                                               model, device, spatial_res)
-    print("computed val features")
-
-    transformed_feats = normalize_and_transform(torch.cat((
-        torch.cat(train_feats, dim=0), torch.cat(val_feats, dim=0)), dim=0), pca_dim)
-    transformed_feats = transformed_feats.reshape(len(datamodule.voc_train) + len(datamodule.voc_val),
-                                                  spatial_res**2, pca_dim)
-    print(f"Normalized and PCA to {pca_dim} dims with shape {transformed_feats.size()}")
-
-    # Store to disk
-    print("Storing to disk")
-    os.makedirs(experiment_folder, exist_ok=True)
-    torch.save(transformed_feats[:len(datamodule.voc_train)], os.path.join(experiment_folder, "all_pascal_train.pt"))
-    torch.save(transformed_feats[len(datamodule.voc_train):], os.path.join(experiment_folder, "all_pascal_val.pt"))
-
-    if gt_save_folder is not None:
-        train_path = os.path.join(gt_save_folder, "all_gt_masks_train_voc12.pt")
-        if not os.path.exists(train_path):
-            torch.save(torch.cat(train_gt), train_path)
-        val_path = os.path.join(gt_save_folder, "all_gt_masks_val_voc12.pt")
-        if not os.path.exists(val_path):
-            torch.save(torch.cat(val_gt), val_path)
-
-    # postprocess attentions
-    if save_attn:
-        process_and_store_attentions(train_attns, 0.65, spatial_res, "train", experiment_folder)
-        process_and_store_attentions(val_attns, 0.65, spatial_res, "val", experiment_folder)
 
 
 def get_backbone_weights(arch: str, method: str, patch_size: int = None,
