@@ -47,5 +47,8 @@ We show an illustration of the Leopart framework, taken from [leopart](https://g
 ## Installation
 We add a conda yaml file to set up the Python environment.
 
+## Script
+- [Satellite Leopart script](https://github.com/RyanAmaudruz/SatelliteLeopart/tree/main/snellius/finetune_with_leopart.sh): Script to run Satellite Leopart.
+
 ## License
 This repository is released under the MIT License. The dataset and pretrained model weights are released under the CC-BY-4.0 license.
